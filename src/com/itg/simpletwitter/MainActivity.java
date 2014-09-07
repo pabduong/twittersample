@@ -1,136 +1,213 @@
 package com.itg.simpletwitter;
 
+import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.security.GeneralSecurityException;
-import java.util.Calendar;
-import java.util.UUID;
-
-import javax.crypto.Mac;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
-
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
 import org.apache.commons.codec.binary.Base64;
-import org.apache.http.client.ClientProtocolException;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.ResponseHandler;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.impl.client.BasicResponseHandler;
-import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.HttpStatus;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import com.itg.simpletwitter.adapters.TweetAdapter;
+import com.itg.simpletwitter.models.Tweets;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
+import android.widget.ListView;
 
 public class MainActivity extends Activity {
 
 	private String TAG = "MainActivity";
-	long timestamp_at_entry;
+
+	private static final String consumer_key = "675D62fFnMtz5Y4dgQxzQ";
+	private static final String consumer_secret = "WHCR88uRVPUGv7yNjpXrwyLNJVBiLIQ4Ms0RSTU";
+	private static final String access_token_url = "https://api.twitter.com/oauth2/token?grant_type=client_credentials";
+	private static final String user_timeline_url = "https://api.twitter.com/1.1/statuses/user_timeline.json?screen_name=twitterapi&count=5";
+
+	private String access_token = null;
+	private ListView mListView;
+	private TweetAdapter mAdapter = null;
+	ArrayList<Tweets> tweetItems;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_main);
-		Calendar c = Calendar.getInstance();
-		timestamp_at_entry = c.getTimeInMillis();
-
-		Log.d(TAG, "time=" + timestamp_at_entry);
+		mListView = (ListView) findViewById(R.id.lv_twitter);
+		mListView.setOnItemClickListener(onItemClick);
+		new AccessTwitter().execute();
 	}
 
 	@Override
 	protected void onResume() {
 		super.onResume();
-		new AccessTwitter().execute();
+
+	}
+
+	private void getAccessToken() {
+		HttpURLConnection connection = null;
+		try {
+			JSONObject response = null;
+			String authorizationString = consumer_key + ":" + consumer_secret;
+
+			URL myURL = new URL(access_token_url);
+			connection = (HttpURLConnection) myURL.openConnection();
+
+			String basicAuth = "Basic "
+					+ new String(new Base64().encode(authorizationString
+							.getBytes()));
+			connection.setRequestProperty("Authorization", basicAuth);
+			connection.setRequestMethod("POST");
+			connection.setRequestProperty("Content-Type",
+					"application/x-www-form-urlencoded");
+
+			if (connection.getResponseCode() == HttpStatus.SC_OK) {
+				String responseString = readStream(connection.getInputStream());
+				response = new JSONObject(responseString);
+
+				access_token = response.optString("access_token");
+				Log.d("duongnx", "responseString:" + access_token);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
+	}
+
+	private void getTweets() {
+		HttpURLConnection connection = null;
+		try {
+			JSONArray response = null;
+
+			URL myURL = new URL(user_timeline_url);
+			connection = (HttpURLConnection) myURL.openConnection();
+
+			String headerStr = "Bearer " + access_token;
+			connection.setRequestProperty("Authorization", headerStr);
+			connection.setRequestMethod("GET");
+
+			if (connection.getResponseCode() == HttpStatus.SC_OK) {
+				String responseString = readStream(connection.getInputStream());
+				response = new JSONArray(responseString);
+				parseTweets(response);
+				Log.d("duongnx", "responseString:" + responseString);
+			}
+
+		} catch (Exception e) {
+			Log.d("duongnx", "Exception::" + e.getMessage());
+			e.printStackTrace();
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
 	}
 
 	private class AccessTwitter extends AsyncTask<Void, Void, Void> {
 
 		@Override
 		protected Void doInBackground(Void... params) {
-			String oauth_signature_method = "HMAC-SHA1";
-			String oauth_consumer_key = "675D62fFnMtz5Y4dgQxzQ";
-			String twitter_secret = "pDNDAL8Pza6TeF9uewRid1UkNlGJogP78xUpc9bXBRE";
-			String uuid_string = UUID.randomUUID().toString();
-			uuid_string = uuid_string.replaceAll("-", "");
-			String oauth_nonce = uuid_string;
-
-			String oauth_timestamp = (new Long(timestamp_at_entry / 1000))
-					.toString();
-			String parameter_string = "oauth_consumer_key="
-					+ oauth_consumer_key + "&oauth_nonce=" + oauth_nonce
-					+ "&oauth_signature_method=" + oauth_signature_method
-					+ "&oauth_timestamp=" + oauth_timestamp
-					+ "&oauth_version=1.0";
-			Log.d(TAG, "parameter_string=" + parameter_string);
-			HttpClient httpclient = new DefaultHttpClient();
-			try {
-				String signature_base_string = "POST&https%3A%2F%2Fapi.twitter.com%2Foauth%2Frequest_token&"
-						+ URLEncoder.encode(parameter_string, "UTF-8");
-
-				Log.d(TAG, "signature_base_string=" + signature_base_string);
-				String oauth_signature = "";
-				oauth_signature = computeSignature(signature_base_string,
-						twitter_secret + "&");
-				Log.d(TAG,
-						"oauth_signature="
-								+ URLEncoder.encode(oauth_signature, "UTF-8"));
-				String authorization_header_string = "OAuth oauth_consumer_key=\""
-						+ oauth_consumer_key
-						+ "\",oauth_signature_method=\"HMAC-SHA1\",oauth_timestamp=\""
-						+ oauth_timestamp
-						+ "\",oauth_nonce=\""
-						+ oauth_nonce
-						+ "\",oauth_version=\"1.0\",oauth_signature=\""
-						+ URLEncoder.encode(oauth_signature, "UTF-8") + "\"";
-				Log.d(TAG, "authorization_header_string="
-						+ authorization_header_string);
-
-				String oauth_token = "";
-				HttpPost httppost = new HttpPost(
-						"https://api.twitter.com/oauth/request_token");
-				httppost.setHeader("Authorization", authorization_header_string);
-				ResponseHandler<String> responseHandler = new BasicResponseHandler();
-				String responseBody = httpclient.execute(httppost,
-						responseHandler);
-				oauth_token = responseBody.substring(
-						responseBody.indexOf("oauth_token=") + 12,
-						responseBody.indexOf("&oauth_token_secret="));
-				Log.d(TAG, "response:" + responseBody);
-			} catch (GeneralSecurityException e) {
-				e.printStackTrace();
-				Log.e(TAG, e.getMessage());
-			} catch (ClientProtocolException cpe) {
-				Log.e(TAG, cpe.getMessage());
-			} catch (IOException ioe) {
-				Log.e(TAG, ioe.getMessage());
-			} finally {
-				httpclient.getConnectionManager().shutdown();
-			}
+			getAccessToken();
 			return null;
 		}
 
 		@Override
 		protected void onPostExecute(Void result) {
 			super.onPostExecute(result);
+			if (access_token != null) {
+				new TweetsTwitter().execute();
+			}
 		}
 	}
 
-	private static String computeSignature(String baseString, String keyString)
-			throws GeneralSecurityException, UnsupportedEncodingException {
+	private class TweetsTwitter extends AsyncTask<Void, Void, Void> {
 
-		SecretKey secretKey = null;
+		@Override
+		protected Void doInBackground(Void... params) {
+			getTweets();
+			return null;
+		}
 
-		byte[] keyBytes = keyString.getBytes();
-		secretKey = new SecretKeySpec(keyBytes, "HmacSHA1");
-
-		Mac mac = Mac.getInstance("HmacSHA1");
-
-		mac.init(secretKey);
-
-		byte[] text = baseString.getBytes();
-
-		return new String(Base64.encodeBase64(mac.doFinal(text))).trim();
+		@Override
+		protected void onPostExecute(Void result) {
+			super.onPostExecute(result);
+			if (tweetItems == null) {
+				return;
+			}
+			if (mAdapter == null) {
+				mAdapter = new TweetAdapter(MainActivity.this);
+			}
+			mAdapter.addData(tweetItems);
+			mListView.setAdapter(mAdapter);
+		}
 	}
+
+	private String readStream(InputStream in) {
+		BufferedReader reader = null;
+		StringBuffer response = new StringBuffer();
+		try {
+			reader = new BufferedReader(new InputStreamReader(in));
+			String line = "";
+			while ((line = reader.readLine()) != null) {
+				response.append(line);
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		} finally {
+			if (reader != null) {
+				try {
+					reader.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		return response.toString();
+	}
+
+	private void parseTweets(JSONArray arr) {
+
+		tweetItems = new ArrayList<Tweets>();
+		for (int i = 0; i < arr.length(); i++) {
+			try {
+				JSONObject obj = arr.getJSONObject(i);
+				Tweets item = new Tweets();
+				item.setCreatedDate(obj.optString("created_at"));
+				item.setId(obj.optString("id"));
+				item.setText(obj.getString("text"));
+
+				tweetItems.add(item);
+			} catch (JSONException e) {
+				e.printStackTrace();
+			}
+		}
+
+		Log.d("duongnx", "parseTweets::success");
+	}
+
+	private OnItemClickListener onItemClick = new OnItemClickListener() {
+
+		@Override
+		public void onItemClick(AdapterView<?> arg0, View arg1, int arg2,
+				long arg3) {
+			Intent i = new Intent(MainActivity.this, DetailActivity.class);
+			i.putExtra("text_content", tweetItems.get(arg2).getText());
+			startActivity(i);
+		}
+	};
 }
